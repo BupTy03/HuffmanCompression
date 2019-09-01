@@ -2,52 +2,14 @@
 
 #include <algorithm>
 #include <cassert>
-#include <list>
+#include <queue>
 
 namespace { // impl
-    static CharFrequencies CalculateFrequencies(const BytesBuffer& message)
+    static void CalculateFrequencies(const BytesBuffer& message, CharFrequencies& frequencies) 
     {
-        CharFrequencies frequencies;
-        for(auto ch : message) {
-            const auto it = frequencies.find(ch);
-            if(it != std::end(frequencies)) {
-                ++(it->second);
-            }
-            else {
-                frequencies.emplace(ch, 1);
-            }
+        for(const auto ch : message) {
+            ++frequencies.at(ch);
         }
-        return frequencies;
-    }
-
-    static int GetChild(const HTree::Nodes& nodes, std::list<int>& freeIds)
-    {
-        const auto childIt = std::min_element(std::cbegin(freeIds), std::cend(freeIds),
-        [&nodes](const auto left, const auto right)
-        {
-            return nodes.at(left).weight < nodes.at(right).weight;
-        });
-
-        assert(childIt != std::cend(freeIds));
-
-        const int childID = *childIt;
-        freeIds.erase(childIt);
-        return childID;
-    }
-
-    static HuffmanDict BuildHuffmanDictFromTree(const HTree::Nodes& nodes, const HTree::NodeIDs& leafs)
-    {
-        HuffmanDict result;
-        for(const int leafID : leafs) {
-            const auto sign = nodes.at(leafID).sign;
-            result.emplace(sign, BitsBuffer());
-            auto& bits = result[sign];
-            for(int parentID = leafID; nodes.at(parentID).parentNodeID >= 0; parentID = nodes.at(parentID).parentNodeID) {
-                bits.push_back(nodes.at(nodes.at(parentID).parentNodeID).rightNodeID == parentID);
-            }
-            std::reverse(std::begin(bits), std::end(bits));
-        }
-        return result;
     }
 }
 
@@ -55,30 +17,26 @@ HTree::HTree(const BytesBuffer& message) { setMessage(message); }
 
 void HTree::setMessage(const BytesBuffer& message)
 {
-    const auto frequencies = CalculateFrequencies(message);
+    CharFrequencies frequencies{0};
+    CalculateFrequencies(message, frequencies);
     const auto leafs = fillNodes(frequencies);
     buildTree(leafs);
-    huffmanDict_ = BuildHuffmanDictFromTree(nodes_, leafs);
-}
-
-int HTree::makeNode()
-{
-    nodes_.emplace_back();
-    return nodes_.size() - 1;
+    buildHuffmanDictFromTree(huffmanDict_, leafs);
 }
 
 HTree::NodeIDs HTree::fillNodes(const CharFrequencies& frequencies)
 {
     NodeIDs leafsIDs;
-    leafsIDs.reserve(frequencies.size());
-    
-    nodes_.reserve(frequencies.size());
-    for(const auto& signWeight : frequencies) {
-        const int currNodeID = makeNode();
+    for(std::size_t currentSign = 0; currentSign < frequencies.size(); ++currentSign) {
+        const std::size_t currSignFrequency = frequencies.at(currentSign);
+        if(currSignFrequency == 0) {
+            continue;
+        }
 
-        auto& lastElem = nodes_.at(currNodeID);
-        lastElem.sign = signWeight.first;
-        lastElem.weight = signWeight.second;
+        const int currNodeID = makeNode();
+        auto& lastElem = getNode(currNodeID);
+        lastElem.sign = currentSign;
+        lastElem.weight = currSignFrequency;
         leafsIDs.push_back(currNodeID);
     }
     return leafsIDs;
@@ -86,16 +44,22 @@ HTree::NodeIDs HTree::fillNodes(const CharFrequencies& frequencies)
 
 void HTree::buildTree(const NodeIDs& leafs)
 {
-    std::list<int> freeNodes(leafs.cbegin(), leafs.cend());
+    const auto comp = [this](const int left, const int right) {
+        return getNode(left).weight > getNode(right).weight;
+    };
+
+    std::priority_queue<int, std::vector<int>, decltype(comp)> freeNodes(comp, leafs);
     while(freeNodes.size() > 1) {
-        const int leftChildID = GetChild(nodes_, freeNodes);
-        const int rightChildID = GetChild(nodes_, freeNodes);
+        const int leftChildID = freeNodes.top();
+        freeNodes.pop();
+        const int rightChildID = freeNodes.top();
+        freeNodes.pop();
 
         const int parentID = makeNode();
-        auto& parent = nodes_.at(parentID);
+        auto& parent = getNode(parentID);
 
-        auto& leftChild = nodes_.at(leftChildID);
-        auto& rightChild = nodes_.at(rightChildID);
+        auto& leftChild = getNode(leftChildID);
+        auto& rightChild = getNode(rightChildID);
 
         parent.leftNodeID = leftChildID;
         parent.rightNodeID = rightChildID;
@@ -104,6 +68,19 @@ void HTree::buildTree(const NodeIDs& leafs)
         leftChild.parentNodeID = parentID;
         rightChild.parentNodeID = parentID;
 
-        freeNodes.push_back(parentID);
+        freeNodes.push(parentID);
+    }
+}
+
+void HTree::buildHuffmanDictFromTree(HuffmanDict& dict, const NodeIDs& leafs)
+{
+    for(const int leafID : leafs) {
+        const auto sign = getNode(leafID).sign;
+        auto& bits = dict.at(static_cast<std::size_t>(sign));
+        for(int parentID = leafID; getNode(parentID).parentNodeID >= 0; parentID = getNode(parentID).parentNodeID) {
+            const int parentOfParentID = getNode(parentID).parentNodeID;
+            bits.push_back(getNode(parentOfParentID).rightNodeID == parentID);
+        }
+        std::reverse(std::begin(bits), std::end(bits));
     }
 }
